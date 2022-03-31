@@ -1,182 +1,177 @@
 // SPDX-License-Identifier: MIT
-// Adapted from World of Women: https://etherscan.io/token/0xe785e82358879f061bc3dcac6f0444462d4b5330#readContract
-pragma solidity ^0.8.2;
+pragma solidity ^0.8.6;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
-// Want to launch your own collection ? Check out https://buildship.dev
-contract AvatarNFT is ERC721, ERC721Enumerable, Ownable {
-
-    uint256 internal _price; // = 0.03 ether;
-    uint256 internal _reserved; // = 200;
-
-    uint256 public MAX_SUPPLY; // = 10000;
-    uint256 public MAX_TOKENS_PER_MINT; // = 20;
-
-    uint256 public startingIndex;
-
-    address payable beneficiary;
-
-    bool private _saleStarted;
-
-    string public PROVENANCE_HASH = "";
-    string public baseURI;
+/**
+ * @title HexarchiaWarlords
+ * HexarchiaWarlords - Smart contract for Hexarchia Warlords characters
+ */
+contract HexarchiaWarlords is ERC721, Ownable {
+    mapping(uint256 => bool) private _revealedNFTs;
+    mapping(address => bool) private _minters;
+    address openseaProxyAddress;
+    address umiProxyAddress;
+    string public contract_ipfs_json;
+    string public contract_base_uri;
+    string private baseURI;
+    using Counters for Counters.Counter;
+    Counters.Counter private _tokenIdCounter;
+    bool public is_collection_revealed = false;
+    string public notrevealed_nft = "https://api.hexarchia.com/warlords/awakening.json";
+    uint256 HARD_CAP = 7680;
 
     constructor(
-        uint256 _startPrice, uint256 _maxSupply,
-        uint256 _nReserved,
-        uint256 _maxTokensPerMint,
-        string memory _uri,
-        string memory _name, string memory _symbol
-    ) ERC721(_name, _symbol) {
-        _price = _startPrice;
-        _reserved = _nReserved;
-        MAX_SUPPLY = _maxSupply;
-        MAX_TOKENS_PER_MINT = _maxTokensPerMint;
-        baseURI = _uri;
+        address _openseaProxyAddress,
+        string memory _name,
+        string memory _ticker,
+        string memory _contract_ipfs,
+        address _umiProxyAddress
+    ) ERC721(_name, _ticker) {
+        openseaProxyAddress = _openseaProxyAddress;
+        umiProxyAddress = _umiProxyAddress;
+        contract_ipfs_json = _contract_ipfs;
+        contract_base_uri = "https://api.hexarchia.com/warlords/";
     }
 
-    function _baseURI() internal view override returns (string memory) {
-        return baseURI;
+    function _baseURI() internal override view returns (string memory) {
+        return contract_base_uri;
+    }
+
+    function tokenURI(uint256 _tokenId)
+        public
+        view
+        override(ERC721)
+        returns (string memory)
+    {
+        if(is_collection_revealed == true){
+            string memory _tknId = Strings.toString(_tokenId);
+            return string(abi.encodePacked(contract_base_uri, _tknId, ".json"));
+        } else {
+            if(_revealedNFTs[_tokenId] == true) {
+                string memory _tknId = Strings.toString(_tokenId);
+                return string(abi.encodePacked(contract_base_uri, _tknId, ".json"));
+            } else {
+                return notrevealed_nft;
+            }
+        }
     }
 
     function contractURI() public view returns (string memory) {
-        return baseURI;
+        return contract_ipfs_json;
     }
 
-    function setBaseURI(string calldata uri) public onlyOwner {
-        baseURI = uri;
-    }
-
-    function setBeneficiary(address payable _beneficiary) public virtual onlyOwner {
-        // require non set
-        require(beneficiary == address(0));
-
-        beneficiary = _beneficiary;
-    }
-
-    function _beforeTokenTransfer(address from, address to, uint256 tokenId)
-        internal
-        override(ERC721, ERC721Enumerable)
-    {
-        super._beforeTokenTransfer(from, to, tokenId);
-    }
-
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(ERC721, ERC721Enumerable)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
-    }
-
-    modifier whenSaleStarted() {
-        require(_saleStarted, "Sale not started");
-        _;
-    }
-
-    function mint(uint256 _nbTokens) whenSaleStarted public payable virtual {
-        uint256 supply = totalSupply();
-        require(_nbTokens <= MAX_TOKENS_PER_MINT, "You cannot mint more than MAX_TOKENS_PER_MINT tokens at once!");
-        require(supply + _nbTokens <= MAX_SUPPLY - _reserved, "Not enough Tokens left.");
-        require(_nbTokens * _price <= msg.value, "Inconsistent amount sent!");
-
-        for (uint256 i; i < _nbTokens; i++) {
-            _safeMint(msg.sender, supply + i);
-        }
-    }
-
-    function flipSaleStarted() external onlyOwner {
-        require(beneficiary != address(0), "Beneficiary not set");
-
-        _saleStarted = !_saleStarted;
-
-        if (_saleStarted && startingIndex == 0) {
-            setStartingIndex();
-        }
-    }
-
-    function saleStarted() public view returns(bool) {
-        return _saleStarted;
-    }
-
-    // Make it possible to change the price: just in case
-    function setPrice(uint256 _newPrice) external virtual onlyOwner {
-        _price = _newPrice;
-    }
-
-    function getPrice() public view virtual returns (uint256){
-        return _price;
-    }
-
-    function getReservedLeft() public view virtual returns (uint256) {
-        return _reserved;
-    }
-
-    // This should be set before sales open.
-    function setProvenanceHash(string memory provenanceHash) public onlyOwner {
-        PROVENANCE_HASH = provenanceHash;
-    }
-
-    // Helper to list all the tokens of a wallet
-    function walletOfOwner(address _owner) public view returns(uint256[] memory) {
+    function tokensOfOwner(address _owner) external view returns(uint256[] memory ownerTokens) {
         uint256 tokenCount = balanceOf(_owner);
+        if (tokenCount == 0) {
+            // Return an empty array
+            return new uint256[](0);
+        } else {
+            uint256[] memory result = new uint256[](tokenCount);
+            uint256 totalWarlords = totalSupply();
+            uint256 resultIndex = 0;
+            uint256 warlordId;
 
-        uint256[] memory tokensId = new uint256[](tokenCount);
-        for(uint256 i; i < tokenCount; i++){
-            tokensId[i] = tokenOfOwnerByIndex(_owner, i);
-        }
-        return tokensId;
-    }
+            for (warlordId = 1; warlordId <= totalWarlords; warlordId++) {
+                if (ownerOf(warlordId) == _owner) {
+                    result[resultIndex] = warlordId;
+                    resultIndex++;
+                }
+            }
 
-    function claimReserved(uint256 _number, address _receiver) external onlyOwner virtual {
-        require(_number <= _reserved, "That would exceed the max reserved.");
-
-        uint256 _tokenId = totalSupply();
-        for (uint256 i; i < _number; i++) {
-            _safeMint(_receiver, _tokenId + i);
-        }
-
-        _reserved = _reserved - _number;
-    }
-
-    function setStartingIndex() public virtual {
-        require(startingIndex == 0, "Starting index is already set");
-
-        // BlockHash only works for the most 256 recent blocks.
-        uint256 _block_shift = uint(keccak256(abi.encodePacked(block.difficulty, block.timestamp)));
-        _block_shift =  1 + (_block_shift % 255);
-
-        // This shouldn't happen, but just in case the blockchain gets a reboot?
-        if (block.number < _block_shift) {
-            _block_shift = 1;
-        }
-
-        uint256 _block_ref = block.number - _block_shift;
-        startingIndex = uint(blockhash(_block_ref)) % MAX_SUPPLY;
-
-        // Prevent default sequence
-        if (startingIndex == 0) {
-            startingIndex = startingIndex + 1;
+            return result;
         }
     }
 
-    function withdraw() public virtual onlyOwner {
-        require(beneficiary != address(0), "Beneficiary not set");
-
-        uint256 _balance = address(this).balance;
-
-        require(payable(beneficiary).send(_balance));
+    /*
+        This method will mint the token to provided user, can be called just by the proxy address.
+    */
+    function proxyMintNFT(address _to)
+        public
+    {
+        require(isMinter(msg.sender), "Hexarchia: Only minters can mint");
+        uint256 reached = _tokenIdCounter.current() + 1;
+        require(reached <= HARD_CAP, "Hexarchia: Hard cap reached");
+        _tokenIdCounter.increment();
+        uint256 newTokenId = _tokenIdCounter.current();
+        _mint(_to, newTokenId);
     }
 
-    function DEVELOPER() public pure returns (string memory _url) {
-        _url = "https://buildship.dev";
+    function totalSupply() public view returns (uint256) {
+        return _tokenIdCounter.current();
     }
 
-    function DEVELOPER_ADDRESS() public pure returns (address payable _dev) {
-        _dev = payable(0x704C043CeB93bD6cBE570C6A2708c3E1C0310587);
+    /*
+        This method will allow owner to fix the contract details
+     */
+
+    function fixContractDescription(string memory newDescription) public onlyOwner {
+        contract_ipfs_json = newDescription;
+    }
+
+    /*
+        This method will allow owner to fix the contract baseURI
+     */
+
+    function fixBaseURI(string memory newURI) public onlyOwner {
+        contract_base_uri = newURI;
+    }
+
+    /*
+        These methods will add or remove minting roles.
+    */
+    function isMinter(address _toCheck) public view returns (bool) {
+        return _minters[_toCheck] == true;
+    }
+
+    function addMinter(address _toAdd) public onlyOwner {
+        _minters[_toAdd] = true;
+    }
+
+    function removeMinter(address _toRemove) public onlyOwner {
+        _minters[_toRemove] = false;
+    }
+
+    /*
+        This method will allow owner reveal the collection
+     */
+
+    function revealCollection() public onlyOwner {
+        is_collection_revealed = true;
+    }
+
+    /*
+        This method will reveal the NFT
+    */
+    function revealNFT(uint256 _tokenId) public returns (bool) {
+        require(ownerOf(_tokenId) == msg.sender, "Hexarchia Warlords: You must own the NFT");
+        _revealedNFTs[_tokenId] = true;
+        return true;
+    }
+
+    function isRevealed(uint256 _tokenId) public view returns (bool) {
+        return _revealedNFTs[_tokenId];
+    }
+
+    /**
+     * Override isApprovedForAll to whitelist proxy accounts
+     */
+    function isApprovedForAll(address _owner, address _operator)
+        public
+        override
+        view
+        returns (bool isOperator)
+    {
+        // Approving for UMi and Opensea address
+        if (
+            _operator == address(openseaProxyAddress)
+        ) {
+            return true;
+        }
+
+        return super.isApprovedForAll(_owner, _operator);
     }
 }
